@@ -1,0 +1,126 @@
+[
+  {
+    "id": "http-in-health",
+    "type": "http in",
+    "z": "main",
+    "name": "Health",
+    "url": "/health",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 160,
+    "y": 80,
+    "wires": [["http-resp-200"]]
+  },
+  {
+    "id": "http-resp-200",
+    "type": "http response",
+    "z": "main",
+    "name": "200 OK",
+    "statusCode": "",
+    "headers": {},
+    "x": 360,
+    "y": 80,
+    "wires": []
+  },
+
+  {
+    "id": "http-in-assistant",
+    "type": "http in",
+    "z": "main",
+    "name": "Assistant In",
+    "url": "/assistant",
+    "method": "post",
+    "upload": true,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 200,
+    "wires": [["to-json"]]
+  },
+  {
+    "id": "to-json",
+    "type": "json",
+    "z": "main",
+    "name": "Parse JSON",
+    "property": "payload",
+    "action": "",
+    "pretty": false,
+    "x": 340,
+    "y": 200,
+    "wires": [["build-openai-request"]]
+  },
+  {
+    "id": "build-openai-request",
+    "type": "function",
+    "z": "main",
+    "name": "Build OpenAI Chat Payload",
+    "func": "// msg.payload = { message, calendarData?, now? }\nconst userText = msg.payload?.message || \"\";\nconst cal = msg.payload?.calendarData || {};\nconst now = msg.payload?.now || new Date().toISOString();\n\nconst systemPrompt = `Du bist mein persönlicher Kalender-Manager und Gesprächspartner. Sprache: Deutsch.\nEingaben:\n- KalenderJSON: (nur zur Analyse, nie ausgeben)\n- Benutzereingabe (Rechtschreibung korrigieren, außer Datum/KalenderJSON)\n- AktuellesDatum\n\nIntents: get_info, create_event, delete_event, update_event, move_event, travel_time, advice (mehrere möglich).\nAusgabe (immer nur JSON):\n{\n  \"intents\": [...],\n  \"events\": [\n    {\"title\":\"\", \"startDate\":\"DD/MM/YYYY HH:MM AM/PM\", \"endDate\":\"DD/MM/YYYY HH:MM AM/PM\", \"notes\":\"\", \"isAllDay\":true/false, \"location\":\"\", \"alertMinutesBefore\":\"yyyy-MM-dd'T'HH:mm:ss\"}\n  ],\n  // optionale Felder NUR wenn Intent erkannt:\n  // update_event: { \"target\": {...}, \"update_fields\": {...} }\n  // move_event: { \"target\": {...}, \"move_to\": {...} ODER \"move_by\": {...} }\n  // delete_event: { \"delete_criteria\": {...} }\n  // advice: { \"advice_notes\": \"kurze natürlich gesprochene Antwort für TTS\" }\n}\nRegeln:\n- Fehlende Dauer=1h, notes/location=\"\" wenn leer, Orte nicht im Titel wiederholen.\n- Titel/Ort aus Kontext (keine generischen Orte).\n- alertMinutesBefore = Start minus X Minuten (falls genannt).\n- Gib niemals etwas außer dem JSON-Objekt aus.`;\n\nmsg.headers = {\n  \"Content-Type\": \"application/json\",\n  \"Authorization\": `Bearer ${process.env.OPENAI_API_KEY || ''}`\n};\n\nmsg.payload = {\n  model: \"gpt-4o-mini\",\n  temperature: 0.3,\n  messages: [\n    { role: \"system\", content: systemPrompt },\n    { role: \"user\", content: `KalenderJSON: ${JSON.stringify(cal)}\\nAktuellesDatum: ${now}\\nBenutzereingabe: ${userText}` }\n  ]\n};\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 200,
+    "wires": [["http-openai"]]
+  },
+  {
+    "id": "http-openai",
+    "type": "http request",
+    "z": "main",
+    "name": "OpenAI Chat Completions",
+    "method": "POST",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "https://api.openai.com/v1/chat/completions",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "authType": "",
+    "headers": {
+      "Authorization": "Bearer ${OPENAI_API_KEY}",
+      "Content-Type": "application/json"
+    },
+    "x": 860,
+    "y": 200,
+    "wires": [["to-json-2"]]
+  },
+  {
+    "id": "to-json-2",
+    "type": "json",
+    "z": "main",
+    "name": "Resp → JSON",
+    "property": "payload",
+    "action": "",
+    "pretty": false,
+    "x": 1080,
+    "y": 200,
+    "wires": [["extract-json-content"]]
+  },
+  {
+    "id": "extract-json-content",
+    "type": "function",
+    "z": "main",
+    "name": "Extract model JSON",
+    "func": "try {\n  const content = msg.payload?.choices?.[0]?.message?.content || \"{}\";\n  let out = {};\n  try { out = JSON.parse(content); } catch(e) {\n    const start = content.indexOf('{');\n    const end = content.lastIndexOf('}');\n    if (start >= 0 && end > start) {\n      out = JSON.parse(content.slice(start, end+1));\n    } else {\n      out = { intents: [\"advice\"], events: [], advice_notes: \"Ich konnte die Antwort nicht parsen. Bitte wiederhole das.\" };\n    }\n  }\n  msg.payload = out;\n  return msg;\n} catch (err) {\n  msg.statusCode = 500;\n  msg.payload = { error: true, message: err.message };\n  return msg;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1285,
+    "y": 200,
+    "wires": [["http-out-assistant"]]
+  },
+  {
+    "id": "http-out-assistant",
+    "type": "http response",
+    "z": "main",
+    "name": "Assistant Out",
+    "statusCode": "",
+    "headers": { "Content-Type": "application/json" },
+    "x": 1500,
+    "y": 200,
+    "wires": []
+  }
+]
