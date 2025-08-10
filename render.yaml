@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: kalender-bot
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: NODE_RED_CREDENTIAL_SECRET
+        sync: false
+    healthCheckPath: /health
